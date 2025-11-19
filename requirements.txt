@@ -5,3 +5,12 @@ lightgbm
 joblib
 fastapi
 uvicorn
+
+streamlit
+langchain
+langchain-openai
+pdfplumber
+python-dotenv
+google-generativeai
+openai
+pathlib
