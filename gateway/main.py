@@ -81,15 +81,15 @@ async def root():
             "docs": "/xai/docs"
         }
     
-    # if "predictive-career-path-model" in loaded_models:
-    #     models_info["career-path"] = {
-    #         "name": "Predictive Career Path Model",
-    #         "prefix": "/career-path",
-    #         "endpoints": [
-    #             {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
-    #         ],
-    #         "docs": "/career-path/docs"
-    #     }
+    if "predictive-career-path-model" in loaded_models:
+        models_info["career-path"] = {
+            "name": "Predictive Career Path Model",
+            "prefix": "/career-path",
+            "endpoints": [
+                {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
+            ],
+            "docs": "/career-path/docs"
+        }
     
     if "ai-skill-gap-analysis" in loaded_models:
         models_info["skill-gap"] = {
