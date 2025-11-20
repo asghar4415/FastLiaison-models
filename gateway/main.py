@@ -55,8 +55,8 @@ def load_model_app(model_dir_name: str, app_prefix: str):
 model_configs = [
     ("explainable-ai-recommendations", "/xai"),
     ("predictive-career-path-model", "/career-path"),
-    ("ai-skill-gap-analysis", "/skill-gap"),
     # Add more models here as they're created
+    # ("another-model", "/another"),
 ]
 
 for model_dir, prefix in model_configs:
@@ -81,26 +81,14 @@ async def root():
             "docs": "/xai/docs"
         }
     
-    # if "predictive-career-path-model" in loaded_models:
-    #     models_info["career-path"] = {
-    #         "name": "Predictive Career Path Model",
-    #         "prefix": "/career-path",
-    #         "endpoints": [
-    #             {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
-    #         ],
-    #         "docs": "/career-path/docs"
-    #     }
-    
-    if "ai-skill-gap-analysis" in loaded_models:
-        models_info["skill-gap"] = {
-            "name": "AI-Powered Skill Gap Analysis and Learning Pathways",
-            "prefix": "/skill-gap",
+    if "predictive-career-path-model" in loaded_models:
+        models_info["career-path"] = {
+            "name": "Predictive Career Path Model",
+            "prefix": "/career-path",
             "endpoints": [
-                {"path": "/skill-gap/analyze", "method": "POST", "description": "Analyze skill gaps and generate learning pathways"},
-                {"path": "/skill-gap/pathways", "method": "POST", "description": "Generate learning pathway options"},
-                {"path": "/skill-gap/health", "method": "GET", "description": "Health check"},
+                {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
             ],
-            "docs": "/skill-gap/docs"
+            "docs": "/career-path/docs"
         }
     
     return {
