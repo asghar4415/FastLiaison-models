@@ -110,7 +110,6 @@ class HumanizedFeedbackGenerator:
     
     def __init__(self, model):
         self.model = model
-        # self.templates = self._load_feedback_templates()
 
     
     
