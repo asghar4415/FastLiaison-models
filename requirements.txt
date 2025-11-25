@@ -5,7 +5,6 @@ lightgbm
 joblib
 fastapi
 uvicorn
-
 streamlit
 langchain
 langchain-openai
@@ -14,3 +13,9 @@ python-dotenv
 google-generativeai
 openai
 pathlib
+streamlit>=1.28.0
+plotly
+numpy
+matplotlib
+seaborn
+markdown
