@@ -54,9 +54,7 @@ def load_model_app(model_dir_name: str, app_prefix: str):
 # Load all models automatically
 model_configs = [
     ("explainable-ai-recommendations", "/xai"),
-    # ("predictive-career-path-model", "/career-path"),
     # Add more models here as they're created
-    # ("another-model", "/another"),
 ]
 
 for model_dir, prefix in model_configs:
@@ -91,6 +89,18 @@ async def root():
     #         ],
     #         "docs": "/career-path/docs"
     #     }
+    
+    if "ai-skill-gap-analysis" in loaded_models:
+        models_info["skill-gap"] = {
+            "name": "AI-Powered Skill Gap Analysis and Learning Pathways",
+            "prefix": "/skill-gap",
+            "endpoints": [
+                {"path": "/skill-gap/analyze", "method": "POST", "description": "Analyze skill gaps and generate learning pathways"},
+                {"path": "/skill-gap/pathways", "method": "POST", "description": "Generate learning pathway options"},
+                {"path": "/skill-gap/health", "method": "GET", "description": "Health check"},
+            ],
+            "docs": "/skill-gap/docs"
+        }
     
     return {
         "message": "Welcome to FastLiaison AI Models Gateway",
