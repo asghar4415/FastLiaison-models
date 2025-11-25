@@ -1,7 +1,13 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
+from pathlib import Path
+
 from xai import ExplainableJobMatcher
+from model_usage import JobMatcherWithFeedback
+from model import (EnhancedMLModelTrainer, EnhancedFeatureEngineering,
+                   EnhancedMLModelTrainerWithFeedback, HumanizedFeedbackGenerator)
+
 
 app = FastAPI(
     title="Explainable AI Job Matching Service",
@@ -69,6 +75,13 @@ class MatchResponse(BaseModel):
     student_name: str
     job_title: str
     company: str
+
+class PredictResponse(BaseModel):
+    match_score: float
+    recommendation_type: str
+    component_scores: Dict[str, float]
+    basic_explanation: str
+    humanized_feedback: Optional[Dict[str, Any]] = None
 
 # Mock data adapter for XAI class
 class MockDataAdapter:
@@ -188,6 +201,106 @@ class AdaptedExplainableJobMatcher(ExplainableJobMatcher):
     def calculate_weighted_score(self, scores):
         return self.adapter.calculate_weighted_score(scores)
 
+# -----------------------------------------------------------------------------
+# Helpers for ML matcher endpoint
+# -----------------------------------------------------------------------------
+
+MODEL_FILENAME = "xai_gradient_boosting.pkl"
+MODEL_PATH = Path(__file__).parent / MODEL_FILENAME
+_ml_matcher: Optional[JobMatcherWithFeedback] = None
+
+
+def get_ml_matcher() -> JobMatcherWithFeedback:
+    """
+    Lazy-load the ML matcher so we only hit disk the first time /predict is used.
+    """
+    global _ml_matcher
+    if _ml_matcher is None:
+        if not MODEL_PATH.exists():
+            raise HTTPException(
+                status_code=503,
+                detail=f"Trained model file not found at {MODEL_PATH.name}. Please train and export the model first."
+            )
+        _ml_matcher = JobMatcherWithFeedback(str(MODEL_PATH), enable_feedback=True)
+    return _ml_matcher
+
+
+def _normalize_student(student: StudentProfile) -> Dict[str, Any]:
+    """
+    Convert StudentProfile into the structure expected by JobMatcherWithFeedback.
+    """
+    data = student.dict()
+    data['dept_name'] = data.pop('department_name')
+
+    skill_id_to_name = {}
+    normalized_skills = []
+    for skill in data.get('skills', []):
+        normalized_skills.append({
+            'skill_id': skill['skill_id'],
+            'skill_name': skill['name'],
+            'proficiency_level': skill['proficiency_level'],
+            'is_verified': skill.get('is_verified', False)
+        })
+        skill_id_to_name[skill['skill_id']] = skill['name']
+    data['skills'] = normalized_skills
+
+    normalized_projects = []
+    for project in data.get('projects', []):
+        normalized_projects.append({
+            'p_id': project['p_id'],
+            'title': project['title'],
+            'description': project.get('description'),
+            'is_verified': project.get('is_verified', False),
+            'skills': [
+                skill_id_to_name.get(skill_id, str(skill_id))
+                for skill_id in project.get('skills', [])
+            ]
+        })
+    data['projects'] = normalized_projects
+
+    normalized_courses = []
+    for course in data.get('courses', []):
+        normalized_courses.append({
+            'course_id': course['course_id'],
+            'course_name': course['course_name'],
+            'gpa': course['grade'],
+            'grade': course['grade']
+        })
+    data['courses'] = normalized_courses
+
+    # Provide defaults for optional collections used downstream
+    data.setdefault('internships', [])
+
+    return data
+
+
+def _normalize_job(job: JobDescription) -> Dict[str, Any]:
+    """
+    Normalize JobDescription so feature extraction can run without key errors.
+    """
+    data = job.dict()
+
+    normalized_skills = []
+    for skill in data.get('required_skills', []):
+        normalized_skills.append({
+            'skill_id': skill['skill_id'],
+            'skill_name': skill['name'],
+            'required_level': skill['required_level'],
+            'is_mandatory': skill.get('is_mandatory', True),
+            'weight': skill.get('weight', 1.0)
+        })
+    data['required_skills'] = normalized_skills
+
+    # Ensure string-based departments for fuzzy matching
+    data['eligible_departments'] = [
+        str(dept) for dept in data.get('eligible_departments', [])
+    ]
+
+    # Optional fields referenced by feedback logic
+    data.setdefault('min_experience_years', 0)
+
+    return data
+
 @app.post("/match", response_model=MatchResponse)
 async def match_student_to_job(request: MatchRequest):
     """
@@ -215,6 +328,55 @@ async def match_student_to_job(request: MatchRequest):
     
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing match: {str(e)}")
+
+
+@app.post("/predict", response_model=PredictResponse)
+async def predict_match_score(request: MatchRequest, feedback_mode: str = 'full'):
+    """
+    Predict match score using the trained ML model with optional humanized feedback.
+
+    Parameters:
+        feedback_mode (str, optional): Controls the type and detail of feedback returned in the response.
+            Valid values:
+                - 'full': Return comprehensive, humanized feedback with detailed explanations.
+                - 'quick': Return a brief summary of the match and key points.
+                - 'structured': Return structured, machine-readable feedback for programmatic use.
+                - 'none': Return only the match score, with no feedback or explanation.
+            Default is 'full'.
+    """
+    import traceback
+    try:
+        matcher = get_ml_matcher()
+
+        result = matcher.match_student_with_job(
+            student=_normalize_student(request.student),
+            job=_normalize_job(request.job),
+            feedback_mode=feedback_mode
+        )
+
+        return PredictResponse(**result)
+    except HTTPException:
+        # Propagate FastAPI HTTPException verbatim
+        raise
+    except Exception as exc:
+        # Log full traceback for debugging (server-side only)
+        error_traceback = traceback.format_exc()
+        print(f"❌ Error in /predict endpoint:")
+        print(error_traceback)
+        # Return user-friendly error message
+        error_msg = str(exc)
+        if "not found" in error_msg.lower() or "file" in error_msg.lower():
+            raise HTTPException(
+                status_code=503,
+                detail=f"Model file issue: {error_msg}. Please ensure the model is trained and saved."
+            )
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error generating prediction: {error_msg}"
+        )
+
+
+
 
 @app.get("/health")
 async def health_check():
