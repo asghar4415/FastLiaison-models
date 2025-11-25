@@ -49,7 +49,7 @@ class StudentProfile(BaseModel):
 
 # --- 2. Load Models (No change here) ---
 
-MODEL_DIR = MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
+MODEL_DIR = os.path.join(os.path.dirname(__file__), "models")
 JOBS_DIR = os.path.join(os.path.dirname(__file__), "data")
 
 
@@ -65,7 +65,7 @@ try:
     mlb = joblib.load(os.path.join(MODEL_DIR, 'multilabel_binarizer.pkl'))
     job_skills_df = pd.read_csv(os.path.join(JOBS_DIR, 'job_skills.csv'))
     job_skills_df['required_skills'] = job_skills_df['required_skills'].apply(
-        lambda x: x.split(','))
+        lambda x: [s.strip() for s in x.split(',')])
 except FileNotFoundError as e:
     raise RuntimeError(
         f"Model file not found. Have you run train.py? Error: {e}")
