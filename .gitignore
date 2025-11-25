@@ -7,4 +7,5 @@ venv/
 env/
 .idea/
 .vscode/
-
+enhanced_training_data.csv
+demo_predict_payload.json
