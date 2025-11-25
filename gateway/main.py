@@ -54,8 +54,6 @@ def load_model_app(model_dir_name: str, app_prefix: str):
 # Load all models automatically
 model_configs = [
     ("explainable-ai-recommendations", "/xai"),
-    ("predictive-career-path-model", "/career-path"),
-    ("ai-skill-gap-analysis", "/skill-gap"),
     # Add more models here as they're created
 ]
 
@@ -75,21 +73,22 @@ async def root():
             "prefix": "/xai",
             "endpoints": [
                 {"path": "/xai/match", "method": "POST", "description": "Match student to job"},
+                {"path": "/xai/predict", "method": "POST", "description": "Predict match score with ML model"},
                 {"path": "/xai/health", "method": "GET", "description": "Health check"},
                 {"path": "/xai/match-by-ids", "method": "POST", "description": "Match by IDs (future)"},
             ],
             "docs": "/xai/docs"
         }
     
-    if "predictive-career-path-model" in loaded_models:
-        models_info["career-path"] = {
-            "name": "Predictive Career Path Model",
-            "prefix": "/career-path",
-            "endpoints": [
-                {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
-            ],
-            "docs": "/career-path/docs"
-        }
+    # if "predictive-career-path-model" in loaded_models:
+    #     models_info["career-path"] = {
+    #         "name": "Predictive Career Path Model",
+    #         "prefix": "/career-path",
+    #         "endpoints": [
+    #             {"path": "/career-path/predict", "method": "POST", "description": "Predict career path"},
+    #         ],
+    #         "docs": "/career-path/docs"
+    #     }
     
     if "ai-skill-gap-analysis" in loaded_models:
         models_info["skill-gap"] = {
