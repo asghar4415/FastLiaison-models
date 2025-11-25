@@ -334,6 +334,15 @@ async def match_student_to_job(request: MatchRequest):
 async def predict_match_score(request: MatchRequest, feedback_mode: str = 'full'):
     """
     Predict match score using the trained ML model with optional humanized feedback.
+
+    Parameters:
+        feedback_mode (str, optional): Controls the type and detail of feedback returned in the response.
+            Valid values:
+                - 'full': Return comprehensive, humanized feedback with detailed explanations.
+                - 'quick': Return a brief summary of the match and key points.
+                - 'structured': Return structured, machine-readable feedback for programmatic use.
+                - 'none': Return only the match score, with no feedback or explanation.
+            Default is 'full'.
     """
     import traceback
     try:
