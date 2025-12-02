@@ -176,9 +176,10 @@ class SyntheticTrainingDataGenerator:
         }
     
     def score_skills(self, student_skills, required_skills):
-        """Score skills match"""
+        """Score skills match with verification bonus"""
         matched_skills = []
         missing_skills = []
+        verified_skills_count = 0
         
         for req_skill in required_skills:
             student_skill = next(
@@ -192,10 +193,19 @@ class SyntheticTrainingDataGenerator:
                     student_skill['proficiency_level'],
                     req_skill['required_level']
                 )
+                
+                # Apply verification bonus - verified skills get 15% boost
+                is_verified = student_skill.get('is_verified', False)
+                verification_multiplier = 1.15 if is_verified else 1.0
+                
+                if is_verified:
+                    verified_skills_count += 1
+                
                 matched_skills.append({
                     'name': req_skill['skill_name'],
-                    'proficiency_match': proficiency_match,
-                    'weight': req_skill['weight']
+                    'proficiency_match': proficiency_match * verification_multiplier,
+                    'weight': req_skill['weight'],
+                    'is_verified': is_verified
                 })
             else:
                 missing_skills.append({
@@ -214,7 +224,8 @@ class SyntheticTrainingDataGenerator:
         return {
             'score': round(score, 2),
             'matched_skills': matched_skills,
-            'missing_skills': missing_skills
+            'missing_skills': missing_skills,
+            'verified_skills_count': verified_skills_count
         }
     
     def compare_proficiency(self, student_level, required_level):
@@ -249,8 +260,9 @@ class SyntheticTrainingDataGenerator:
         }
     
     def score_projects(self, student_projects, required_skills):
-        """Score relevant projects"""
+        """Score relevant projects with verification bonus"""
         relevant_projects = []
+        verified_projects_count = 0
         
         for project in student_projects:
             # Check if project skills overlap with job skills
@@ -259,16 +271,28 @@ class SyntheticTrainingDataGenerator:
             overlap = project_skills.intersection(required_skill_names)
             
             if overlap:
+                is_verified = project.get('is_verified', False)
+                # Verified projects get higher weight (1.2x multiplier)
+                project_weight = 1.2 if is_verified else 1.0
+                
+                if is_verified:
+                    verified_projects_count += 1
+                
                 relevant_projects.append({
                     'title': project['title'],
-                    'matched_skills_count': len(overlap)
+                    'matched_skills_count': len(overlap),
+                    'is_verified': is_verified,
+                    'weight': project_weight
                 })
         
-        score = min(len(relevant_projects) * 25, 100)
+        # Calculate weighted score - verified projects contribute more
+        base_score = sum(p['weight'] for p in relevant_projects) * 25
+        score = min(base_score, 100)
         
         return {
             'score': score,
             'relevant_projects_count': len(relevant_projects),
+            'verified_projects_count': verified_projects_count,
             'projects': relevant_projects
         }
     
