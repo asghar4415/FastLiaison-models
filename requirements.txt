@@ -1,6 +1,9 @@
 pandas
 scikit-learn
 sentence-transformers
+transformers
+datasets
+accelerate>=0.26.0
 lightgbm
 joblib
 fastapi
@@ -19,3 +22,5 @@ numpy
 matplotlib
 seaborn
 markdown
+tqdm
+torch

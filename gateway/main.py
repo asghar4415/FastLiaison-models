@@ -57,6 +57,7 @@ def load_model_app(model_dir_name: str, app_prefix: str):
 model_configs = [
     ("explainable-ai-recommendations", "/xai"),
     ("predictive-career-path-model", "/career-path"),
+    ("job-email-classifier", "/email-classifier"),
 ]
 
 
@@ -111,6 +112,21 @@ async def root():
                     "description": "Health check"},
             ],
             "docs": "/skill-gap/docs"
+        }
+
+    if "job-email-classifier" in loaded_models:
+        models_info["email-classifier"] = {
+            "name": "Job Email Classifier",
+            "prefix": "/email-classifier",
+            "endpoints": [
+                {"path": "/email-classifier/predict", "method": "POST",
+                    "description": "Classify an email as job-related or not"},
+                {"path": "/email-classifier/predict/batch", "method": "POST",
+                    "description": "Classify multiple emails at once"},
+                {"path": "/email-classifier/health", "method": "GET",
+                    "description": "Health check"},
+            ],
+            "docs": "/email-classifier/docs"
         }
 
     return {
