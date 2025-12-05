@@ -61,6 +61,7 @@ class EmailPredictionResponse(BaseModel):
     confidence: float = Field(..., description="Confidence score as percentage", ge=0, le=100)
     probabilities: Dict[str, float] = Field(..., description="Probability scores for each class")
     label: int = Field(..., description="Numeric label: 0 for not_job, 1 for job")
+    label_text: str = Field(..., description="Human-readable label: 'relevant' or 'not relevant'")
     
     class Config:
         json_schema_extra = {
@@ -71,7 +72,8 @@ class EmailPredictionResponse(BaseModel):
                     "not_job": 4.77,
                     "job": 95.23
                 },
-                "label": 1
+                "label": 1,
+                "label_text": "relevant"
             }
         }
 
@@ -80,12 +82,6 @@ class EmailPredictionResponse(BaseModel):
 async def predict_email(request: EmailRequest):
     """
     Classify an email as job-related or not job-related using BERT model.
-    
-    Args:
-        request: EmailRequest containing the email content
-        
-    Returns:
-        EmailPredictionResponse with prediction, confidence, and probabilities
     """
     try:
         # Get classifier instance
@@ -93,6 +89,11 @@ async def predict_email(request: EmailRequest):
         
         # Make prediction
         result = model.predict(request.email)
+        
+        # Add human-readable label_text
+        # label 1 => "relevant", label 0 => "not relevant"
+        label_value = result.get("label")
+        result["label_text"] = "relevant" if label_value == 1 else "irrelevant"
         
         return EmailPredictionResponse(**result)
         
