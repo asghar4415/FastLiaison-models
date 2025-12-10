@@ -82,7 +82,7 @@ class ExplainableJobMatcher:
 
         for req_skill in required_skills:
             student_skill = next(
-                (s for s in student_skills if s['skill_id'] == req_skill['skill_id']),
+                (s for s in student_skills if str(s['skill_id']).lower() == str(req_skill['skill_id']).lower()),
                 None
             )
 
@@ -127,8 +127,12 @@ class ExplainableJobMatcher:
         """
         Score education eligibility
         """
+        # normalize department strings
+        student_dept = str(self.student.get('department_name') or self.student.get('dept_id', '')).strip().lower()
+        eligible_depts = {str(d).strip().lower() for d in self.job.get('eligible_departments', [])}
+
         batch_eligible = self.student['batch'] in self.job['eligible_batches']
-        dept_eligible = self.student['dept_id'] in self.job['eligible_departments']
+        dept_eligible = student_dept in eligible_depts
         cgpa_eligible = self.student['cgpa'] >= self.job['eligible_cgpa_min']
 
         score = 0
@@ -154,8 +158,8 @@ class ExplainableJobMatcher:
         relevant_projects = []
         for project in student_projects:
             project_skills = self.get_project_skills(project['p_id'])
-            overlap = set(ps['skill_id'] for ps in project_skills).intersection(
-                set(js['skill_id'] for js in job_skills)
+            overlap = set(str(ps['skill_id']).lower() for ps in project_skills).intersection(
+                set(str(js['skill_id']).lower() for js in job_skills)
             )
 
             if overlap:

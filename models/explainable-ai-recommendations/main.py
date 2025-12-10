@@ -18,28 +18,28 @@ app = FastAPI(
 # Pydantic Models for Request/Response
 
 class Skill(BaseModel):
-    skill_id: int
+    skill_id: str
     name: str
     proficiency_level: str = Field(..., description="Beginner, Intermediate, Advanced, Expert")
     is_verified: bool = False
 
 class Project(BaseModel):
-    p_id: int
+    p_id: str
     title: str
     description: Optional[str] = None
     is_verified: bool = False
-    skills: List[int] = Field(default_factory=list, description="List of skill_ids used in project")
+    skills: List[str] = Field(default_factory=list, description="List of skill_ids used in project")
 
 class Course(BaseModel):
-    course_id: int
+    course_id: str
     course_name: str
     grade: float = Field(..., ge=0, le=4, description="Grade on 4.0 scale")
 
 class StudentProfile(BaseModel):
-    student_id: int
+    student_id: str
     name: str
     batch: int = Field(..., description="Graduation year, e.g., 2024")
-    dept_id: int
+    dept_id: Optional[str] = Field(None, description="Department code/name (optional if department_name provided)")
     department_name: str
     cgpa: float = Field(..., ge=0, le=4)
     skills: List[Skill]
@@ -47,19 +47,19 @@ class StudentProfile(BaseModel):
     courses: List[Course]
 
 class RequiredSkill(BaseModel):
-    skill_id: int
+    skill_id: str
     name: str
     required_level: str = Field(..., description="Beginner, Intermediate, Advanced, Expert")
     is_mandatory: bool = True
     weight: float = Field(default=1.0, description="Importance weight of this skill")
 
 class JobDescription(BaseModel):
-    job_id: int
+    job_id: str
     title: str
     description: str
     company: str
     eligible_batches: List[int] = Field(..., description="Eligible graduation years")
-    eligible_departments: List[int]
+    eligible_departments: List[str] = Field(..., description="Eligible department names or codes, e.g., CS, SE, AI")
     eligible_cgpa_min: float = Field(..., ge=0, le=4)
     required_skills: List[RequiredSkill]
 
@@ -293,7 +293,7 @@ def _normalize_job(job: JobDescription) -> Dict[str, Any]:
 
     # Ensure string-based departments for fuzzy matching
     data['eligible_departments'] = [
-        str(dept) for dept in data.get('eligible_departments', [])
+        str(dept).strip().lower() for dept in data.get('eligible_departments', [])
     ]
 
     # Optional fields referenced by feedback logic
