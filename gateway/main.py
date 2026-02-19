@@ -1,8 +1,10 @@
+
 from fastapi import FastAPI, HTTPException
 import sys
 from pathlib import Path
 from importlib import import_module
 import importlib.util
+
 
 app = FastAPI(
     title="FastLiaison AI Models Gateway",
@@ -19,27 +21,27 @@ loaded_models = {}
 
 
 def load_model_app(model_dir_name: str, app_prefix: str):
-    """
-    Dynamically load a model's FastAPI app and mount it
-    """
     try:
         model_path = models_path / model_dir_name / "main.py"
         if not model_path.exists():
             print(f"Warning: {model_dir_name}/main.py not found, skipping...")
             return None
 
-        # Load the module dynamically
         spec = importlib.util.spec_from_file_location(
             f"{model_dir_name}.main",
             model_path
         )
         module = importlib.util.module_from_spec(spec)
 
-        # Add model directory to path for relative imports
+        # Save and restore sys.path to prevent cross-model pollution
+        original_path = sys.path.copy()                          # ← save
         sys.path.insert(0, str(models_path / model_dir_name))
-        spec.loader.exec_module(module)
+        
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.path = original_path                             # ← restore
 
-        # Get the FastAPI app from the module
         if hasattr(module, 'app'):
             app.mount(app_prefix, module.app)
             loaded_models[model_dir_name] = app_prefix
@@ -52,12 +54,16 @@ def load_model_app(model_dir_name: str, app_prefix: str):
         print(f"Error loading {model_dir_name}: {str(e)}")
         return None
 
-
 # Load all models automatically
+
+# Add multimodel-assessment (MMIA) API service
 model_configs = [
+    ("mutlimodel-assesment", "/mmia"),        # ← move to top
     ("explainable-ai-recommendations", "/xai"),
     ("predictive-career-path-model", "/career-path"),
     ("job-email-classifier", "/email-classifier"),
+    ("ai-mentor-chatbot", "/mentor"),
+    ("ai-skill-gap-analysis", "/skill-gap"),
 ]
 
 
@@ -87,6 +93,28 @@ async def root():
                     "description": "Match by IDs (future)"},
             ],
             "docs": "/xai/docs"
+        }
+
+    if "ai-mentor-chatbot" in loaded_models:
+        models_info["mentor"] = {
+            "name": "AI Career Mentor Chatbot",
+            "prefix": "/mentor",
+            "endpoints": [
+                {"path": "/mentor/chat/mentor", "method": "POST",
+                    "description": "Chat with AI career mentor"},
+            ],
+            "docs": "/mentor/docs"
+        }
+
+    if "predictive-career-path-model" in loaded_models:
+        models_info["career-path"] = {
+            "name": "Predictive Career Path Model",
+            "prefix": "/career-path",
+            "endpoints": [
+                {"path": "/career-path/predict", "method": "POST",
+                    "description": "Predict career path with skill alignment"},
+            ],
+            "docs": "/career-path/docs"
         }
 
     # if "predictive-career-path-model" in loaded_models:
@@ -127,6 +155,20 @@ async def root():
                     "description": "Health check"},
             ],
             "docs": "/email-classifier/docs"
+        }
+
+
+    if "mutlimodel-assesment" in loaded_models:
+        models_info["mmia"] = {
+            "name": "Multimodel Video Emotion & Transcription (MMIA)",
+            "prefix": "/mmia",
+            "endpoints": [
+                {"path": "/mmia/analyze", "method": "POST", "description": "Analyze video for emotions"},
+                {"path": "/mmia/analyze-with-transcription", "method": "POST", "description": "Analyze video with audio transcription"},
+                {"path": "/mmia/batch-analyze", "method": "POST", "description": "Batch analyze multiple videos"},
+                {"path": "/mmia/health", "method": "GET", "description": "Health check"},
+            ],
+            "docs": "/mmia/docs"
         }
 
     return {
