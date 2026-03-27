@@ -82,6 +82,45 @@ class FaceDetector:
         
         return faces
     
+    def detect_faces_with_landmarks(self, frame):
+        """
+        Detect faces and return both bounding boxes and landmarks
+        
+        Args:
+            frame: BGR image from OpenCV
+            
+        Returns:
+            Tuple of (face_boxes, face_landmarks_list)
+            face_boxes: List of bounding boxes [(startX, startY, endX, endY), ...]
+            face_landmarks_list: List of MediaPipe face landmarks objects
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        h, w = frame.shape[:2]
+        
+        # Convert to RGB for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_rgb.flags.writeable = False
+        
+        # Process frame
+        results = self.face_mesh.process(frame_rgb)
+        frame_rgb.flags.writeable = True
+        
+        faces = []
+        landmarks_list = []
+        if results.multi_face_landmarks:
+            logger.debug(f"FaceMesh detected {len(results.multi_face_landmarks)} faces")
+            for i, face_landmarks in enumerate(results.multi_face_landmarks):
+                box = self.get_box(face_landmarks, w, h)
+                faces.append(box)
+                landmarks_list.append(face_landmarks)
+                logger.debug(f"Face {i}: bbox={box}, landmarks available")
+        else:
+            logger.debug("No faces detected by FaceMesh")
+        
+        return faces, landmarks_list
+    
     def extract_face(self, frame, bbox):
         """
         Extract face region from frame
@@ -145,6 +184,68 @@ class FaceDetector:
                            color, thickness=font_thickness, lineType=cv2.LINE_AA)
         
         return frame_copy
+
+    # In face_detector.py — add alongside existing detect_faces()
+
+    def estimate_gaze_and_pose(self, frame, face_landmarks, w, h):
+        """Estimate head pose and eye contact from face landmarks"""
+        try:
+            import logging
+            logger = logging.getLogger(__name__)
+            
+            # Key landmark indices for gaze estimation
+            LEFT_EYE  = [33, 160, 158, 133, 153, 144]
+            RIGHT_EYE = [362, 385, 387, 263, 373, 380]
+            
+            # Eye contact proxy: ratio of visible iris area
+            # Head pose: solvePnP on 6 canonical 3D face points
+            face_3d = []
+            face_2d = []
+            for idx, lm in enumerate(face_landmarks.landmark):
+                if idx in [1, 33, 61, 199, 263, 291]:  # nose, eyes, chin
+                    x, y = int(lm.x * w), int(lm.y * h)
+                    face_2d.append([x, y])
+                    face_3d.append([x, y, lm.z])
+            
+            logger.debug(f"Landmarks extracted: {len(face_3d)} points")
+            
+            if len(face_3d) < 4:
+                logger.warning("Insufficient landmarks for pose estimation")
+                return None
+            
+            face_2d = np.array(face_2d, dtype=np.float64)
+            face_3d = np.array(face_3d, dtype=np.float64)
+            focal = w  # approx focal length
+            cam_matrix = np.array([[focal,0,w/2],[0,focal,h/2],[0,0,1]], dtype=np.float64)
+            dist = np.zeros((4,1))
+            
+            success, rvec, tvec = cv2.solvePnP(face_3d, face_2d, cam_matrix, dist)
+            
+            if not success:
+                logger.warning("solvePnP failed")
+                return None
+            
+            rmat, _ = cv2.Rodrigues(rvec)
+            angles, *_ = cv2.RQDecomp3x3(rmat)
+            
+            pitch, yaw, roll = angles  # degrees
+            # yaw: left/right, pitch: up/down
+            looking_at_camera = abs(yaw) < 10 and abs(pitch) < 10
+            
+            result = {
+                "pitch": round(float(pitch), 2),
+                "yaw": round(float(yaw), 2),
+                "roll": round(float(roll), 2),
+                "eye_contact": looking_at_camera
+            }
+            logger.debug(f"Gaze estimation result: {result}")
+            return result
+            
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error in estimate_gaze_and_pose: {e}", exc_info=True)
+            return None
     
     def close(self):
         """Release resources"""

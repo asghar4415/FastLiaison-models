@@ -9,3 +9,10 @@ env/
 .vscode/
 enhanced_training_data.csv
 demo_predict_payload.json
+models/mutlimodel-assesment/models/nlp/**/xet/
+models/mutlimodel-assesment/models/nlp/**/*.locks/
+models/mutlimodel-assesment/models/nlp/**/logs/
+models/mutlimodel-assesment/models/nlp/**/blobs/
+
+# Optional (recommended)
+models/mutlimodel-assesment/models/nlp/**/refs/

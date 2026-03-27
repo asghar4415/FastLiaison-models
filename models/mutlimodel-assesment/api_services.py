@@ -17,6 +17,7 @@ from collections import defaultdict, Counter
 import whisper
 from pydantic import BaseModel
 import logging
+import uuid
 
 # Directory of this script, used for temp files
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -289,6 +290,13 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
     frames_with_faces = 0
     frames_without_faces = 0
     
+    # Storage for gaze analysis
+    gaze_pitches = []
+    gaze_yaws = []
+    gaze_rolls = []
+    eye_contact_count = 0
+    gaze_frames_count = 0
+    
     frame_number = 0
     processed_frames = 0
     
@@ -305,9 +313,11 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
             # Process every Nth frame
             if frame_number % sample_rate == 0:
                 timestamp = frame_number / fps if fps > 0 else 0
+                logger.debug(f"Processing frame {frame_number}/{total_frames} (timestamp: {timestamp:.2f}s)")
                 
-                # Detect faces
-                faces = detector.detect_faces(frame)
+                # Detect faces and get landmarks
+                faces, face_landmarks_list = detector.detect_faces_with_landmarks(frame)
+                logger.debug(f"Frame {frame_number}: Detected {len(faces)} faces, {len(face_landmarks_list)} landmark sets")
                 
                 if len(faces) > 0:
                     frames_with_faces += 1
@@ -319,6 +329,26 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                     # Predict emotion
                     emotion, confidence, probabilities = predictor.predict_emotion(face_img)
                     
+                    # Estimate gaze and head pose using landmarks
+                    gaze_data = None
+                    if len(face_landmarks_list) > 0:
+                        logger.info(f"Processing gaze for frame {frame_number} - Landmarks available: {len(face_landmarks_list)}")
+                        gaze_data = detector.estimate_gaze_and_pose(frame, face_landmarks_list[0], width, height)
+                        logger.info(f"Gaze data result: {gaze_data}")
+                    else:
+                        logger.warning(f"No landmarks available for frame {frame_number}")
+                    
+                    if gaze_data:
+                        gaze_pitches.append(gaze_data['pitch'])
+                        gaze_yaws.append(gaze_data['yaw'])
+                        gaze_rolls.append(gaze_data['roll'])
+                        if gaze_data.get('eye_contact', False):
+                            eye_contact_count += 1
+                        gaze_frames_count += 1
+                        logger.info(f"Gaze frame count updated: {gaze_frames_count}")
+                    else:
+                        logger.warning(f"Gaze estimation returned None for frame {frame_number}")
+                    
                     # Store results
                     frame_emotions.append({
                         'timestamp': round(timestamp, 2),
@@ -328,7 +358,8 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                         'all_probabilities': {
                             k: round(float(v), 4) for k, v in probabilities.items()
                         },
-                        'faces_detected': len(faces)
+                        'faces_detected': len(faces),
+                        'gaze': gaze_data
                     })
                     
                     # Update statistics
@@ -353,6 +384,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
             
     finally:
         cap.release()
+        cv2.destroyAllWindows()
     
     logger.info(f"Processed {processed_frames} frames, {frames_with_faces} with faces")
     
@@ -417,7 +449,24 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                 'duration': round(frame_emotions[-1]['timestamp'] - frame_emotions[segment_start]['timestamp'], 2)
             })
     
-    return {
+    # Calculate gaze analysis
+    gaze_analysis = None
+    if gaze_frames_count > 0:
+        gaze_analysis = {
+            'average_pitch': round(float(np.mean(gaze_pitches)), 2) if gaze_pitches else 0.0,
+            'average_yaw': round(float(np.mean(gaze_yaws)), 2) if gaze_yaws else 0.0,
+            'average_roll': round(float(np.mean(gaze_rolls)), 2) if gaze_rolls else 0.0,
+            'eye_contact_percentage': round((eye_contact_count / gaze_frames_count * 100), 2),
+            'gaze_frames_analyzed': gaze_frames_count,
+            'eye_contact_frames': eye_contact_count
+        }
+        logger.info(f"✓ GAZE ANALYSIS COMPLETE: {gaze_analysis}")
+    else:
+        logger.warning(f"⚠ NO GAZE DATA: gaze_frames_count = {gaze_frames_count}, gaze_pitches = {len(gaze_pitches)}, gaze_yaws = {len(gaze_yaws)}")
+    
+    logger.info(f"DEBUG: About to return emotion_results with gaze_analysis = {gaze_analysis}")
+    
+    emotion_results = {
         'video_metadata': {
             'total_frames': total_frames,
             'processed_frames': processed_frames,
@@ -439,8 +488,15 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
             'emotion_statistics': emotion_statistics,
             'emotion_segments': emotion_segments[:20]  # Limit to first 20 segments
         },
+        'gaze_analysis': gaze_analysis,
         'frame_by_frame': frame_emotions[:100]  # Limit to first 100 frames for response size
     }
+    
+    # Verify gaze_analysis is in emotion_results
+    logger.info(f"DEBUG: emotion_results keys = {list(emotion_results.keys())}")
+    logger.info(f"DEBUG: emotion_results['gaze_analysis'] = {emotion_results.get('gaze_analysis', 'KEY NOT FOUND!')}")
+    
+    return emotion_results
 
 
 @app.get("/")
@@ -534,98 +590,208 @@ async def analyze_video(
             os.unlink(tmp_path)
 
 
-@app.post("/analyze-with-transcription")
+# @app.post("/analyze-with-transcription")
+# async def analyze_video_with_transcription(
+#     file: UploadFile = File(...),
+#     sample_rate: int = 1,
+#     include_frames: bool = False,
+#     transcribe: bool = True
+# ):
+#     """
+#     Analyze emotions in uploaded video and transcribe audio
+    
+#     Args:
+#         file: MP4 video file
+#         sample_rate: Process every Nth frame (default: 1)
+#         include_frames: Include frame-by-frame data in response (default: False)
+#         transcribe: Enable audio transcription (default: True)
+        
+#     Returns:
+#         Comprehensive emotion analysis with transcription
+#     """
+#     start_time = datetime.now()
+    
+#     logger.info(f"Received video + transcription request: {file.filename}")
+    
+#     # Validate file type
+#     if not file.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
+#         raise HTTPException(
+#             status_code=400,
+#             detail="Invalid file format. Please upload MP4, AVI, MOV, or MKV video."
+#         )
+    
+#     # Save uploaded file temporarily in the same directory as api_services.py
+#     video_tmp_path = os.path.join(SCRIPT_DIR, f"_tmp_video_{os.getpid()}.mp4")
+#     with open(video_tmp_path, 'wb') as tmp_video:
+#         content = await file.read()
+#         tmp_video.write(content)
+#     video_path = video_tmp_path
+    
+#     audio_path = None
+#     transcription_result = None
+    
+#     try:
+#         # Analyze video emotions
+#         logger.info("Starting emotion analysis...")
+#         emotion_results = analyze_video_emotions(video_path, sample_rate=sample_rate)
+        
+#         # Extract and transcribe audio if requested
+#         if transcribe:
+#             audio_path = os.path.join(SCRIPT_DIR, f"_tmp_audio_{os.getpid()}.wav")
+            
+#             logger.info("Extracting audio from video...")
+#             if extract_audio_from_video(video_path, audio_path):
+#                 logger.info("Starting audio transcription...")
+#                 transcription_result = transcribe_audio(audio_path)
+#             else:
+#                 logger.warning("Could not extract audio from video")
+#                 transcription_result = {
+#                     'success': False,
+#                     'error': 'No audio stream found in video or extraction failed',
+#                     'full_text': '',
+#                     'segments': [],
+#                     'segment_count': 0
+#                 }
+        
+#         # Remove frame-by-frame data if not requested
+#         if not include_frames:
+#             emotion_results.pop('frame_by_frame', None)
+        
+#         processing_time = (datetime.now() - start_time).total_seconds()
+        
+#         logger.info(f"Complete analysis finished in {processing_time:.2f}s")
+        
+#         # Combine results
+#         response = {
+#             "success": True,
+#             "filename": file.filename,
+#             "processing_time_seconds": round(processing_time, 2),
+#             "emotion_analysis": emotion_results,
+#             "transcription": transcription_result if transcribe else None
+#         }
+        
+#         return response
+        
+#     except Exception as e:
+#         logger.error(f"Error processing video: {e}", exc_info=True)
+#         raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
+        
+#     finally:
+#         # Clean up temporary files
+#         if os.path.exists(video_path):
+#             os.unlink(video_path)
+#         if audio_path and os.path.exists(audio_path):
+#             os.unlink(audio_path)
+
+def cleanup_files(video_path, audio_path):
+    import time
+    for path in [video_path, audio_path]:
+        for _ in range(3):
+            try:
+                if os.path.exists(path):
+                    os.unlink(path)
+                    logger.info(f"✓ Deleted temp file: {path}")
+                    break
+            except Exception as e:
+                time.sleep(0.5)
+        else:
+            logger.warning(f"Could not delete temp file: {path}")
+
+
+@app.post("/analyze-with-transcription-new")
 async def analyze_video_with_transcription(
     file: UploadFile = File(...),
     sample_rate: int = 1,
     include_frames: bool = False,
-    transcribe: bool = True
+    transcribe: bool = True,
+    candidate_name: str = Query(default="Unknown", description="Candidate name"),
+    role_applied: str = Query(default="", description="Job role being applied for")
 ):
-    """
-    Analyze emotions in uploaded video and transcribe audio
-    
-    Args:
-        file: MP4 video file
-        sample_rate: Process every Nth frame (default: 1)
-        include_frames: Include frame-by-frame data in response (default: False)
-        transcribe: Enable audio transcription (default: True)
-        
-    Returns:
-        Comprehensive emotion analysis with transcription
-    """
     start_time = datetime.now()
     
-    logger.info(f"Received video + transcription request: {file.filename}")
-    
-    # Validate file type
-    if not file.filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid file format. Please upload MP4, AVI, MOV, or MKV video."
-        )
-    
-    # Save uploaded file temporarily in the same directory as api_services.py
-    video_tmp_path = os.path.join(SCRIPT_DIR, f"_tmp_video_{os.getpid()}.mp4")
-    with open(video_tmp_path, 'wb') as tmp_video:
-        content = await file.read()
-        tmp_video.write(content)
-    video_path = video_tmp_path
-    
-    audio_path = None
-    transcription_result = None
+    # --- video & audio temp file paths ---
+    video_tmp_path = os.path.join(SCRIPT_DIR, f"_tmp_video_{uuid.uuid4()}.mp4")
+    audio_path = os.path.join(SCRIPT_DIR, f"_tmp_audio_{uuid.uuid4()}.wav")
     
     try:
+        # Save video temporarily
+        with open(video_tmp_path, 'wb') as f:
+            f.write(await file.read())
+        
+        logger.info(f"Video saved temporarily: {video_tmp_path}")
+        
         # Analyze video emotions
-        logger.info("Starting emotion analysis...")
-        emotion_results = analyze_video_emotions(video_path, sample_rate=sample_rate)
+        emotion_results = analyze_video_emotions(video_tmp_path, sample_rate=sample_rate)
+        logger.info(f"emotion_results keys: {emotion_results.keys()}")
+        logger.info(f"emotion_results['gaze_analysis']: {emotion_results.get('gaze_analysis', 'KEY NOT FOUND!')}")
         
-        # Extract and transcribe audio if requested
-        if transcribe:
-            audio_path = os.path.join(SCRIPT_DIR, f"_tmp_audio_{os.getpid()}.wav")
+        # --- audio extraction & analysis ---
+        transcription_result = None
+        nlp_result = None
+        acoustic_result = None
+        gaze_result = None
+        
+        if transcribe and extract_audio_from_video(video_tmp_path, audio_path):
+            logger.info(f"Audio extracted temporarily: {audio_path}")
             
-            logger.info("Extracting audio from video...")
-            if extract_audio_from_video(video_path, audio_path):
-                logger.info("Starting audio transcription...")
-                transcription_result = transcribe_audio(audio_path)
-            else:
-                logger.warning("Could not extract audio from video")
-                transcription_result = {
-                    'success': False,
-                    'error': 'No audio stream found in video or extraction failed',
-                    'full_text': '',
-                    'segments': [],
-                    'segment_count': 0
-                }
+            transcription_result = transcribe_audio(audio_path)
+            
+            # Acoustic analysis on audio file
+            from utils.acoustic_analyzer import analyze_acoustics
+            acoustic_result = analyze_acoustics(audio_path)
+            logger.info("✓ Acoustic analysis complete")
+            
+            # NLP on Whisper transcript
+            if transcription_result.get("full_text"):
+                from utils.nlp_analyzer import analyze_transcript
+                nlp_result = analyze_transcript(transcription_result["full_text"])
+                logger.info("✓ NLP analysis complete")
         
-        # Remove frame-by-frame data if not requested
-        if not include_frames:
-            emotion_results.pop('frame_by_frame', None)
+        # Gaze summary from frame-by-frame (computed during emotion analysis)
+        gaze_result = emotion_results.pop("gaze_analysis", None)
+        logger.info(f"✓ Popped gaze_result: {gaze_result}")
+        
+        # Candidate composite score
+        from utils.candidate_scorer import compute_candidate_score
+        candidate_score = compute_candidate_score(
+            emotion_results["emotion_analysis"],
+            gaze_result,
+            acoustic_result,
+            nlp_result
+        )
         
         processing_time = (datetime.now() - start_time).total_seconds()
         
-        logger.info(f"Complete analysis finished in {processing_time:.2f}s")
+        logger.info(f"Analysis completed in {processing_time:.2f}s")
+        logger.info(f"Final gaze_result being returned: {gaze_result}")
         
-        # Combine results
-        response = {
+        return {
             "success": True,
-            "filename": file.filename,
-            "processing_time_seconds": round(processing_time, 2),
+            "candidate": {
+                "name": candidate_name,
+                "role_applied": role_applied,
+                "interview_file": file.filename,
+            },
+            "candidate_score": candidate_score,
             "emotion_analysis": emotion_results,
-            "transcription": transcription_result if transcribe else None
+            "gaze_analysis": gaze_result,
+            "acoustic_analysis": acoustic_result,
+            "verbal_analysis": {
+                "transcription": transcription_result,
+                "nlp": nlp_result
+            },
+            "processing_time_seconds": round(processing_time, 2)
         }
-        
-        return response
-        
+    
     except Exception as e:
         logger.error(f"Error processing video: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")
-        
-    finally:
-        # Clean up temporary files
-        if os.path.exists(video_path):
-            os.unlink(video_path)
-        if audio_path and os.path.exists(audio_path):
-            os.unlink(audio_path)
+    
+    finally: 
+        logger.info("🔥 FINALLY BLOCK EXECUTING")
+       # Clean up temp files
+        cleanup_files(video_tmp_path, audio_path)
+
 
 
 @app.post("/batch-analyze")
@@ -648,6 +814,7 @@ async def batch_analyze_videos(
     results = []
     
     for file in files:
+        tmp_path = None
         try:
             # Process each video
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp_file:
@@ -655,6 +822,7 @@ async def batch_analyze_videos(
                 tmp_file.write(content)
                 tmp_path = tmp_file.name
             
+            logger.info(f"Processing: {file.filename} (temp: {tmp_path})")
             analysis = analyze_video_emotions(tmp_path, sample_rate=sample_rate)
             
             results.append({
@@ -663,15 +831,26 @@ async def batch_analyze_videos(
                 "analysis": analysis
             })
             
-            os.unlink(tmp_path)
+            logger.info(f"✓ Completed: {file.filename}")
             
         except Exception as e:
-            logger.error(f"Error processing {file.filename}: {e}")
+            logger.error(f"Error processing {file.filename}: {e}", exc_info=True)
             results.append({
                 "filename": file.filename,
                 "success": False,
                 "error": str(e)
             })
+        
+        finally:
+            # Ensure temp file is cleaned up
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.unlink(tmp_path)
+                    logger.info(f"✓ Deleted temp file: {tmp_path}")
+                except Exception as e:
+                    logger.warning(f"Could not delete temp file {tmp_path}: {e}")
+    
+    logger.info(f"Batch analysis complete: {sum(1 for r in results if r['success'])}/{len(files)} successful")
     
     return {
         "batch_results": results,
