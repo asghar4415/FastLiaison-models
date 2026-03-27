@@ -17,6 +17,7 @@ Pillow
 mediapipe
 moviepy==1.0.3
 imageio-ffmpeg
+librosa
 
 # AI / ML Core
 torch
