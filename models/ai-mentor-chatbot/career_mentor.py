@@ -1,16 +1,21 @@
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
 import os
 from dotenv import load_dotenv
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
 
 load_dotenv()
 
-# Initialize Gemini via LangChain (no api_base in constructor)
-gemini_llm = ChatOpenAI(
+# Verify the key is actually loaded from .env
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("GEMINI_API_KEY not found. Check your .env file.")
+
+# Initialize Gemini correctly
+gemini_llm = ChatGoogleGenerativeAI(
     model="gemini-2.5-flash",
     temperature=0.7,
-    api_key=os.getenv("GEMINI_API_KEY")
+    api_key=api_key  # The parameter must be 'api_key'
 )
 
 
