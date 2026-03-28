@@ -46,13 +46,25 @@ RUN pip install --no-cache-dir \
 
 # ── OpenCV MUST be pinned before mediapipe is installed
 #    mediapipe 0.10.13 is tested against opencv 4.8.x
+# ── Pin protobuf FIRST — mediapipe 0.10.x requires protobuf<5
+RUN pip install --no-cache-dir \
+    "protobuf>=4.25.3,<5.0.0"
+
+# ── Pin numpy before opencv pulls in numpy 2.x
+RUN pip install --no-cache-dir \
+    "numpy>=1.21.2,<2.0.0"
+
+# ── OpenCV pinned — must be before mediapipe
 RUN pip install --no-cache-dir \
     "opencv-python-headless==4.8.1.78"
+
+# ── mediapipe after all its dependencies are locked
+RUN pip install --no-cache-dir \
+    "mediapipe==0.10.13"
 
 # ── Video / Audio / ML packages
 #    Install mediapipe AFTER opencv so it uses the pinned version
 RUN pip install --no-cache-dir \
-    "mediapipe==0.10.13" \
     "openai-whisper" \
     "librosa" \
     "moviepy==1.0.3" \
@@ -60,8 +72,21 @@ RUN pip install --no-cache-dir \
     "soundfile" \
     "numba" \
     "pillow" \
-    "numpy<2.0" \
     "scipy"
+
+RUN python3 -c "
+import cv2, mediapipe as mp
+print('OpenCV:', cv2.__version__)
+print('MediaPipe:', mp.__version__)
+fm = mp.solutions.face_mesh.FaceMesh(
+    max_num_faces=1,
+    refine_landmarks=False,
+    min_detection_confidence=0.5,
+    min_tracking_confidence=0.5
+)
+fm.close()
+print('FaceMesh: OK')
+"
 
 # ── Transformers / NLP
 RUN pip install --no-cache-dir \
