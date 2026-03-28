@@ -313,11 +313,11 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
             # Process every Nth frame
             if frame_number % sample_rate == 0:
                 timestamp = frame_number / fps if fps > 0 else 0
-                logger.debug(f"Processing frame {frame_number}/{total_frames} (timestamp: {timestamp:.2f}s)")
+                # logger.debug(f"Processing frame {frame_number}/{total_frames} (timestamp: {timestamp:.2f}s)")
                 
                 # Detect faces and get landmarks
                 faces, face_landmarks_list = detector.detect_faces_with_landmarks(frame)
-                logger.debug(f"Frame {frame_number}: Detected {len(faces)} faces, {len(face_landmarks_list)} landmark sets")
+                # logger.debug(f"Frame {frame_number}: Detected {len(faces)} faces, {len(face_landmarks_list)} landmark sets")
                 
                 if len(faces) > 0:
                     frames_with_faces += 1
@@ -332,7 +332,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                     # Estimate gaze and head pose using landmarks
                     gaze_data = None
                     if len(face_landmarks_list) > 0:
-                        logger.info(f"Processing gaze for frame {frame_number} - Landmarks available: {len(face_landmarks_list)}")
+                        # logger.info(f"Processing gaze for frame {frame_number} - Landmarks available: {len(face_landmarks_list)}")
                         gaze_data = detector.estimate_gaze_and_pose(frame, face_landmarks_list[0], width, height)
                         logger.info(f"Gaze data result: {gaze_data}")
                     else:
@@ -345,7 +345,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                         if gaze_data.get('eye_contact', False):
                             eye_contact_count += 1
                         gaze_frames_count += 1
-                        logger.info(f"Gaze frame count updated: {gaze_frames_count}")
+                        # logger.info(f"Gaze frame count updated: {gaze_frames_count}")
                     else:
                         logger.warning(f"Gaze estimation returned None for frame {frame_number}")
                     
