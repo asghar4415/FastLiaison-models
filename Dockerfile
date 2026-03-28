@@ -9,7 +9,6 @@ FROM python:3.11-slim AS builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Install build tools and system dependencies for compiling packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
@@ -23,14 +22,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libxext6 \
     libxrender1 \
-    ffmpeg \
     libgomp1 \
     protobuf-compiler \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /install
 
-# Upgrade pip, setuptools, and wheel
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
 # ── PyTorch CPU-only
@@ -42,51 +39,57 @@ RUN pip install --no-cache-dir \
 # ── Core dependencies
 RUN pip install --no-cache-dir \
     fastapi \
-    uvicorn[standard] \
+    "uvicorn[standard]" \
     pydantic \
     python-multipart \
     python-dotenv
 
-# ── Video / Audio / ML packages
+# ── OpenCV MUST be pinned before mediapipe is installed
+#    mediapipe 0.10.13 is tested against opencv 4.8.x
 RUN pip install --no-cache-dir \
-    opencv-python-headless \
-    mediapipe==0.10.13 \
-    openai-whisper \
-    librosa \
-    moviepy \
-    soundfile \
-    numba \
-    pillow \
-    numpy \
-    scipy
+    "opencv-python-headless==4.8.1.78"
+
+# ── Video / Audio / ML packages
+#    Install mediapipe AFTER opencv so it uses the pinned version
+RUN pip install --no-cache-dir \
+    "mediapipe==0.10.13" \
+    "openai-whisper" \
+    "librosa" \
+    "moviepy==1.0.3" \
+    "imageio-ffmpeg" \
+    "soundfile" \
+    "numba" \
+    "pillow" \
+    "numpy<2.0" \
+    "scipy"
 
 # ── Transformers / NLP
 RUN pip install --no-cache-dir \
-    transformers \
-    sentencepiece \
-    tokenizers
+    "transformers>=4.35.0" \
+    "sentencepiece" \
+    "tokenizers"
 
 # ── ML / XAI
 RUN pip install --no-cache-dir \
-    scikit-learn \
-    joblib \
-    pandas \
-    lightgbm \
-    matplotlib \
-    seaborn
+    "scikit-learn" \
+    "joblib" \
+    "pandas" \
+    "lightgbm" \
+    "matplotlib" \
+    "seaborn"
 
 # ── Chatbot / AI mentor
 RUN pip install --no-cache-dir \
-    langchain \
-    langchain-openai \
-    openai \
-    google-generativeai \
-    pdfplumber
+    "langchain" \
+    "langchain-openai" \
+    "openai" \
+    "google-generativeai" \
+    "pdfplumber"
 
 # ── Misc
 RUN pip install --no-cache-dir \
-    httpx \
-    plotly
+    "httpx" \
+    "plotly"
 
 # ─────────────────────────────────────────────────────────────
 # Stage 2: runtime — lean final image
@@ -95,7 +98,6 @@ FROM python:3.11-slim AS runtime
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-# Runtime OS dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1 \
     libglib2.0-0 \
@@ -111,7 +113,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/lib/python3.11 /usr/local/lib/python3.11
 COPY --from=builder /usr/local/bin /usr/local/bin
 
-# Copy project source
 WORKDIR /app
 COPY . .
 
@@ -128,6 +129,9 @@ ENV XDG_CACHE_HOME=/app/model_cache
 ENV NUMBA_CACHE_DIR=/tmp/numba_cache
 ENV TOKENIZERS_PARALLELISM=false
 ENV GLOG_minloglevel=2
+# Suppress mediapipe graph logging noise
+ENV GLOG_logtostderr=0
+ENV MEDIAPIPE_DISABLE_GPU=1
 
 # ─────────────────────────────────────────────────────────────
 # Expose, healthcheck, entrypoint
