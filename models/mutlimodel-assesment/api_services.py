@@ -10,6 +10,7 @@ import numpy as np
 import tempfile
 import os
 import wave
+import re
 from typing import Dict, List, Optional
 from datetime import datetime
 import torch
@@ -228,6 +229,28 @@ def transcribe_audio(audio_path: str) -> Dict:
         
         full_text = result.get('text', '').strip()
         language = result.get('language', 'unknown')
+        transcript_words = re.findall(r"[A-Za-z0-9']+", full_text)
+        word_count = len(transcript_words)
+        avg_confidence = round(
+            float(np.mean([seg['confidence'] for seg in segments])) if segments else 0.0, 4
+        )
+        speech_detected = (
+            len(segments) > 0 and
+            word_count >= 3 and
+            avg_confidence >= 0.65
+        )
+        if speech_detected:
+            speech_reason = "Speech detected with sufficient confidence"
+        elif not segments:
+            speech_reason = "No speech segments detected by ASR"
+        elif word_count < 3:
+            speech_reason = "Transcript too short to trust as spoken content"
+        else:
+            speech_reason = "Low ASR confidence; likely background noise/non-speech"
+        
+        # Suppress hallucinated ASR text in user-facing payload when speech is unreliable.
+        public_text = full_text if speech_detected else ""
+        public_segments = segments if speech_detected else []
         
         logger.info(f"Transcription complete: {len(segments)} segments, language: {language}")
         if full_text:
@@ -237,10 +260,14 @@ def transcribe_audio(audio_path: str) -> Dict:
         
         return {
             'success': True,
-            'full_text': full_text,
+            'full_text': public_text,
             'language': language,
-            'segments': segments,
-            'segment_count': len(segments)
+            'segments': public_segments,
+            'segment_count': len(public_segments),
+            'word_count': word_count,
+            'avg_segment_confidence': avg_confidence,
+            'speech_detected': speech_detected,
+            'speech_reason': speech_reason
         }
         
     except Exception as e:
@@ -250,7 +277,11 @@ def transcribe_audio(audio_path: str) -> Dict:
             'error': str(e),
             'full_text': '',
             'segments': [],
-            'segment_count': 0
+            'segment_count': 0,
+            'word_count': 0,
+            'avg_segment_confidence': 0.0,
+            'speech_detected': False,
+            'speech_reason': "Transcription failed"
         }
 
 
@@ -294,6 +325,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
     gaze_pitches = []
     gaze_yaws = []
     gaze_rolls = []
+    gaze_eye_contact_scores = []
     eye_contact_count = 0
     gaze_frames_count = 0
     
@@ -334,7 +366,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                     if len(face_landmarks_list) > 0:
                         # logger.info(f"Processing gaze for frame {frame_number} - Landmarks available: {len(face_landmarks_list)}")
                         gaze_data = detector.estimate_gaze_and_pose(frame, face_landmarks_list[0], width, height)
-                        logger.info(f"Gaze data result: {gaze_data}")
+                        # logger.info(f"Gaze data result: {gaze_data}")
                     else:
                         logger.warning(f"No landmarks available for frame {frame_number}")
                     
@@ -342,6 +374,8 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                         gaze_pitches.append(gaze_data['pitch'])
                         gaze_yaws.append(gaze_data['yaw'])
                         gaze_rolls.append(gaze_data['roll'])
+                        if 'eye_contact_score' in gaze_data:
+                            gaze_eye_contact_scores.append(float(gaze_data['eye_contact_score']))
                         if gaze_data.get('eye_contact', False):
                             eye_contact_count += 1
                         gaze_frames_count += 1
@@ -456,6 +490,7 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
             'average_pitch': round(float(np.mean(gaze_pitches)), 2) if gaze_pitches else 0.0,
             'average_yaw': round(float(np.mean(gaze_yaws)), 2) if gaze_yaws else 0.0,
             'average_roll': round(float(np.mean(gaze_rolls)), 2) if gaze_rolls else 0.0,
+            'average_eye_contact_score': round(float(np.mean(gaze_eye_contact_scores)), 3) if gaze_eye_contact_scores else None,
             'eye_contact_percentage': round((eye_contact_count / gaze_frames_count * 100), 2),
             'gaze_frames_analyzed': gaze_frames_count,
             'eye_contact_frames': eye_contact_count
@@ -731,21 +766,61 @@ async def analyze_video_with_transcription(
         acoustic_result = None
         gaze_result = None
         
-        if transcribe and extract_audio_from_video(video_tmp_path, audio_path):
-            logger.info(f"Audio extracted temporarily: {audio_path}")
-            
-            transcription_result = transcribe_audio(audio_path)
-            
-            # Acoustic analysis on audio file
-            from utils.acoustic_analyzer import analyze_acoustics
-            acoustic_result = analyze_acoustics(audio_path)
-            logger.info("✓ Acoustic analysis complete")
-            
-            # NLP on Whisper transcript
-            if transcription_result.get("full_text"):
-                from utils.nlp_analyzer import analyze_transcript
-                nlp_result = analyze_transcript(transcription_result["full_text"])
-                logger.info("✓ NLP analysis complete")
+        if transcribe:
+            audio_extracted = extract_audio_from_video(video_tmp_path, audio_path)
+            if audio_extracted:
+                logger.info(f"Audio extracted temporarily: {audio_path}")
+                transcription_result = transcribe_audio(audio_path)
+                speech_detected = bool(transcription_result.get("speech_detected", False))
+
+                if speech_detected:
+                    # Acoustic analysis on speech-positive clips only.
+                    from utils.acoustic_analyzer import analyze_acoustics
+                    acoustic_result = analyze_acoustics(audio_path)
+                    acoustic_result["available"] = not bool(acoustic_result.get("error"))
+                    acoustic_result["speech_detected"] = True
+                    logger.info("✓ Acoustic analysis complete")
+
+                    # NLP on transcript only when speech quality is reliable.
+                    from utils.nlp_analyzer import analyze_transcript
+                    nlp_result = analyze_transcript(transcription_result.get("full_text", ""))
+                    nlp_result["available"] = not bool(nlp_result.get("error"))
+                    logger.info("✓ NLP analysis complete")
+                else:
+                    acoustic_result = {
+                        "available": False,
+                        "speech_detected": False,
+                        "reason": transcription_result.get("speech_reason", "No reliable speech detected"),
+                    }
+                    nlp_result = {
+                        "available": False,
+                        "error": "No reliable speech detected for NLP analysis",
+                        "reason": transcription_result.get("speech_reason", "No reliable speech detected"),
+                    }
+                    logger.warning("Skipping acoustic/NLP due to non-speech or low-confidence transcription")
+            else:
+                transcription_result = {
+                    "success": False,
+                    "error": "No audio stream found in video or extraction failed",
+                    "full_text": "",
+                    "language": "unknown",
+                    "segments": [],
+                    "segment_count": 0,
+                    "word_count": 0,
+                    "avg_segment_confidence": 0.0,
+                    "speech_detected": False,
+                    "speech_reason": "Audio extraction failed",
+                }
+                acoustic_result = {
+                    "available": False,
+                    "speech_detected": False,
+                    "reason": "Audio extraction failed",
+                }
+                nlp_result = {
+                    "available": False,
+                    "error": "Audio extraction failed; NLP not run",
+                    "reason": "Audio extraction failed",
+                }
         
         # Gaze summary from frame-by-frame (computed during emotion analysis)
         gaze_result = emotion_results.pop("gaze_analysis", None)

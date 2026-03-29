@@ -192,51 +192,121 @@ class FaceDetector:
         try:
             import logging
             logger = logging.getLogger(__name__)
-            
-            # Key landmark indices for gaze estimation
-            LEFT_EYE  = [33, 160, 158, 133, 153, 144]
-            RIGHT_EYE = [362, 385, 387, 263, 373, 380]
-            
-            # Eye contact proxy: ratio of visible iris area
-            # Head pose: solvePnP on 6 canonical 3D face points
-            face_3d = []
-            face_2d = []
-            for idx, lm in enumerate(face_landmarks.landmark):
-                if idx in [1, 33, 61, 199, 263, 291]:  # nose, eyes, chin
-                    x, y = int(lm.x * w), int(lm.y * h)
-                    face_2d.append([x, y])
-                    face_3d.append([x, y, lm.z])
-            
-            logger.debug(f"Landmarks extracted: {len(face_3d)} points")
-            
-            if len(face_3d) < 4:
+
+            # Use stable 2D-3D correspondences for solvePnP.
+            # 2D: MediaPipe landmark coordinates on current frame.
+            # 3D: canonical face model coordinates (in mm-like scale).
+            landmark_indices = {
+                "nose_tip": 1,
+                "chin": 152,
+                "left_eye_outer": 33,
+                "right_eye_outer": 263,
+                "left_mouth": 61,
+                "right_mouth": 291,
+            }
+
+            model_points = np.array([
+                (0.0, 0.0, 0.0),        # nose tip
+                (0.0, -63.6, -12.5),    # chin
+                (-43.3, 32.7, -26.0),   # left eye outer
+                (43.3, 32.7, -26.0),    # right eye outer
+                (-28.9, -28.9, -24.1),  # left mouth corner
+                (28.9, -28.9, -24.1),   # right mouth corner
+            ], dtype=np.float64)
+
+            image_points = []
+            for key in [
+                "nose_tip",
+                "chin",
+                "left_eye_outer",
+                "right_eye_outer",
+                "left_mouth",
+                "right_mouth",
+            ]:
+                lm = face_landmarks.landmark[landmark_indices[key]]
+                x, y = float(lm.x * w), float(lm.y * h)
+                image_points.append((x, y))
+
+            image_points = np.array(image_points, dtype=np.float64)
+
+            if image_points.shape[0] != 6:
                 logger.warning("Insufficient landmarks for pose estimation")
                 return None
-            
-            face_2d = np.array(face_2d, dtype=np.float64)
-            face_3d = np.array(face_3d, dtype=np.float64)
-            focal = w  # approx focal length
-            cam_matrix = np.array([[focal,0,w/2],[0,focal,h/2],[0,0,1]], dtype=np.float64)
-            dist = np.zeros((4,1))
-            
-            success, rvec, tvec = cv2.solvePnP(face_3d, face_2d, cam_matrix, dist)
-            
+
+            focal = float(w)
+            cam_matrix = np.array(
+                [[focal, 0.0, w / 2.0], [0.0, focal, h / 2.0], [0.0, 0.0, 1.0]],
+                dtype=np.float64,
+            )
+            dist = np.zeros((4, 1), dtype=np.float64)
+
+            success, rvec, tvec = cv2.solvePnP(
+                model_points,
+                image_points,
+                cam_matrix,
+                dist,
+                flags=cv2.SOLVEPNP_ITERATIVE
+            )
+
             if not success:
                 logger.warning("solvePnP failed")
                 return None
-            
+
             rmat, _ = cv2.Rodrigues(rvec)
             angles, *_ = cv2.RQDecomp3x3(rmat)
-            
-            pitch, yaw, roll = angles  # degrees
-            # yaw: left/right, pitch: up/down
-            looking_at_camera = abs(yaw) < 10 and abs(pitch) < 10
-            
+
+            def _normalize_angle_deg(angle):
+                # Wrap to [-180, 180] then fold into [-90, 90] to avoid
+                # equivalent-rotation flips that can falsely mark eye contact as off.
+                wrapped = ((float(angle) + 180.0) % 360.0) - 180.0
+                if wrapped > 90.0:
+                    wrapped = 180.0 - wrapped
+                elif wrapped < -90.0:
+                    wrapped = -180.0 - wrapped
+                return wrapped
+
+            pitch_raw, yaw_raw, roll_raw = [float(a) for a in angles]
+            pitch = _normalize_angle_deg(pitch_raw)
+            yaw = _normalize_angle_deg(yaw_raw)
+            roll = _normalize_angle_deg(roll_raw)
+            if not np.isfinite(pitch) or not np.isfinite(yaw) or not np.isfinite(roll):
+                return None
+
+            # Secondary geometric frontalness proxy from landmarks. This helps when
+            # solvePnP angle convention flips, which otherwise causes persistent zeros.
+            left_eye = face_landmarks.landmark[33]
+            right_eye = face_landmarks.landmark[263]
+            nose = face_landmarks.landmark[1]
+            chin = face_landmarks.landmark[152]
+
+            left_x, left_y = float(left_eye.x * w), float(left_eye.y * h)
+            right_x, right_y = float(right_eye.x * w), float(right_eye.y * h)
+            nose_x, nose_y = float(nose.x * w), float(nose.y * h)
+            chin_y = float(chin.y * h)
+
+            eye_mid_x = (left_x + right_x) / 2.0
+            eye_mid_y = (left_y + right_y) / 2.0
+            eye_dist = max(abs(right_x - left_x), 1.0)
+            face_height = max(chin_y - eye_mid_y, 1.0)
+
+            # 0 means centered; larger means turned sideways.
+            yaw_proxy = abs(nose_x - eye_mid_x) / (eye_dist / 2.0)
+            # Typical frontal ratio nose-between-eyes-and-chin is around 0.45-0.60.
+            pitch_ratio = (nose_y - eye_mid_y) / face_height
+            pitch_proxy = abs(pitch_ratio - 0.52)
+
+            # Accept if either robust angle criterion OR geometry criterion indicates frontal pose.
+            looking_at_camera = (
+                (abs(yaw) < 22.0 and abs(pitch) < 20.0) or
+                (yaw_proxy < 0.45 and pitch_proxy < 0.28)
+            )
+
             result = {
                 "pitch": round(float(pitch), 2),
                 "yaw": round(float(yaw), 2),
                 "roll": round(float(roll), 2),
-                "eye_contact": looking_at_camera
+                "eye_contact": looking_at_camera,
+                "eye_contact_score": round(float(max(0.0, 1.0 - min(1.0, (yaw_proxy / 0.45 + pitch_proxy / 0.28) / 2.0))), 3),
             }
             logger.debug(f"Gaze estimation result: {result}")
             return result
