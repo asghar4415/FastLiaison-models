@@ -76,7 +76,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Global model instances (lazy loading)
+
+@app.on_event("startup")
+async def load_models_on_startup():
+    """Load Whisper model at application startup"""
+    global whisper_model
+    logger.info("Loading Whisper model on startup...")
+    try:
+        whisper_model = whisper.load_model("base")
+        logger.info("✓ Whisper model loaded successfully at startup")
+    except Exception as e:
+        logger.error(f"Failed to load Whisper model: {e}", exc_info=True)
+        raise
+
+
+# Global model instances
 face_detector = None
 emotion_predictor = None
 whisper_model = None
@@ -101,13 +115,8 @@ def get_emotion_predictor():
 
 
 def get_whisper_model():
-    """Lazy load Whisper model for transcription"""
+    """Get Whisper model (pre-loaded at startup)"""
     global whisper_model
-    if whisper_model is None:
-        logger.info("Loading Whisper model...")
-        # Use base model for balance of speed and accuracy
-        whisper_model = whisper.load_model("base")
-        logger.info("Whisper model loaded")
     return whisper_model
 
 
