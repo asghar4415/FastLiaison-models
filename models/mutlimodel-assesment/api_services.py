@@ -257,10 +257,15 @@ def transcribe_audio(audio_path: str) -> Dict:
         avg_confidence = round(
             float(np.mean([seg['confidence'] for seg in segments])) if segments else 0.0, 4
         )
+        
+        # DEBUG: Log confidence details
+        logger.info(f"DEBUG - Transcription metrics: segments={len(segments)}, word_count={word_count}, avg_confidence={avg_confidence}")
+        
+        # Lowered threshold to 0.15 to accept real speech with natural confidence variations
         speech_detected = (
             len(segments) > 0 and
             word_count >= 3 and
-            avg_confidence >= 0.65
+            avg_confidence >= 0.15
         )
         if speech_detected:
             speech_reason = "Speech detected with sufficient confidence"
@@ -269,7 +274,7 @@ def transcribe_audio(audio_path: str) -> Dict:
         elif word_count < 3:
             speech_reason = "Transcript too short to trust as spoken content"
         else:
-            speech_reason = "Low ASR confidence; likely background noise/non-speech"
+            speech_reason = f"Low ASR confidence ({avg_confidence:.2f}); likely background noise/non-speech"
         
         # Suppress hallucinated ASR text in user-facing payload when speech is unreliable.
         public_text = full_text if speech_detected else ""
