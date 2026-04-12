@@ -404,8 +404,9 @@ def analyze_video_emotions(video_path: str, sample_rate: int = 1) -> Dict:
                         gaze_rolls.append(gaze_data['roll'])
                         if 'eye_contact_score' in gaze_data:
                             gaze_eye_contact_scores.append(float(gaze_data['eye_contact_score']))
-                        if gaze_data.get('eye_contact', False):
-                            eye_contact_count += 1
+                            # Count as eye contact only if score is above threshold (0.7 = 70% confidence)
+                            if float(gaze_data['eye_contact_score']) >= 0.65:
+                                eye_contact_count += 1
                         gaze_frames_count += 1
                         # logger.info(f"Gaze frame count updated: {gaze_frames_count}")
                     else:
