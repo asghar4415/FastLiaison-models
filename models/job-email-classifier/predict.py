@@ -55,8 +55,8 @@ class EmailClassifier:
             dict: Dictionary containing prediction, confidence, and probabilities
         """
         try:
-            # Tokenize input
-            encoding = self.tokenizer.encode_plus(
+            # Tokenize input (use __call__ instead of encode_plus for compatibility with newer transformers)
+            encoding = self.tokenizer(
                 text,
                 add_special_tokens=True,
                 max_length=self.max_length,
